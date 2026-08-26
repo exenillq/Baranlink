@@ -112,7 +112,6 @@ async def get_token(link_token: str, x_api_key: Optional[str] = Header(default=N
     if API_SECRET_KEY and x_api_key != API_SECRET_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
         
-    # تایید فرمت اجباری اندروید
     if not link_token.startswith("BARANLINK-"):
         raise HTTPException(status_code=400, detail="Invalid license key format")
 
@@ -167,13 +166,12 @@ def send_express_code(phone_number: str, device_uid: str) -> dict:
     params = _get_express_params(device_uid)
     for attempt in range(3):
         try:
-            # 🟢 پروکسی برگشت تا مسدود نشه
             res = requests.post(url, params=params, data=payload, headers=EXPRESS_HEADERS, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=15)
             if res.status_code == 424: return {'status': False, 'error': 'خطای ۴۲۴: نیاز به تغییر آی‌پی است'}
             try: return res.json()
             except ValueError:
                 if attempt < 2: time.sleep(1.5); continue
-                return {'status': False, 'error': f'مسدود شده (کد {res.status_code})'}
+                return {'status': False, 'error': f'خطای پروکسی/کلودفلر (کد {res.status_code})'}
         except Exception:
             if attempt < 2: time.sleep(1.5); continue
             return {'status': False, 'error': 'ارتباط با سامانه برقرار نشد'}
@@ -184,7 +182,6 @@ def verify_express_code(phone_number: str, code: str, device_uid: str) -> dict:
     params = _get_express_params(device_uid)
     for attempt in range(3):
         try:
-            # 🟢 پروکسی برگشت
             res = requests.post(url, params=params, data=payload, headers=EXPRESS_HEADERS, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=15)
             if res.status_code == 424: return {'http_status': 424, 'status': False, 'error': 'خطای ۴۲۴: نیاز به تغییر آی‌پی است'}
             try:
@@ -193,7 +190,7 @@ def verify_express_code(phone_number: str, code: str, device_uid: str) -> dict:
                 return data
             except ValueError:
                 if attempt < 2: time.sleep(1.5); continue
-                return {'http_status': res.status_code, 'status': False, 'error': 'ارتباط با سامانه برقرار نشد'}
+                return {'http_status': res.status_code, 'status': False, 'error': f'خطای پروکسی/کلودفلر (کد {res.status_code})'}
         except Exception:
             if attempt < 2: time.sleep(1.5); continue
             return {'http_status': 500, 'status': False, 'error': 'ارتباط با سامانه برقرار نشد'}
@@ -204,13 +201,12 @@ def register_express_user(phone_number: str, code: str, device_uid: str, first_n
     params = _get_express_params(device_uid)
     for attempt in range(3):
         try:
-            # 🟢 پروکسی برگشت
             res = requests.post(url, params=params, data=payload, headers=EXPRESS_HEADERS, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=15)
             if res.status_code == 424: return {'status': False, 'error': 'خطای ۴۲۴: نیاز به تغییر آی‌پی است'}
             try: return res.json()
             except ValueError:
                 if attempt < 2: time.sleep(1.5); continue
-                return {'status': False, 'error': 'ارتباط با سامانه برقرار نشد'}
+                return {'status': False, 'error': f'خطای پروکسی/کلودفلر (کد {res.status_code})'}
         except Exception:
             if attempt < 2: time.sleep(1.5); continue
             return {'status': False, 'error': 'ارتباط با سامانه برقرار نشد'}
@@ -225,7 +221,7 @@ def send_food_code(phone_number: str) -> dict:
             try: return response.json()
             except ValueError:
                 if attempt < 2: time.sleep(1.5); continue
-                return {'status': False, 'error': f"مسدود شده (کد {response.status_code})"}
+                return {'status': False, 'error': f'خطای پروکسی/کلودفلر (کد {response.status_code})'}
         except Exception:
             if attempt < 2: time.sleep(1.5); continue
             return {'status': False, 'error': "ارتباط با سامانه برقرار نشد"}
@@ -250,7 +246,7 @@ def verify_food_code(phone_number: str, code: str, device_uid: str) -> dict:
                 return data
             except ValueError:
                 if attempt < 2: time.sleep(1.5); continue
-                return {'http_status': response.status_code, 'error': f"مسدود شده"}
+                return {'http_status': response.status_code, 'error': f'خطای پروکسی/کلودفلر (کد {response.status_code})'}
         except Exception:
             if attempt < 2: time.sleep(1.5); continue
             return {'http_status': 500, 'error': "ارتباط با سامانه برقرار نشد"}
@@ -273,7 +269,7 @@ def register_food_user(phone_number: str, code: str, device_uid: str, first_name
             try: return response.json()
             except ValueError:
                 if attempt < 2: time.sleep(1.5); continue
-                return {'status': False, 'error': f"مسدود شده"}
+                return {'status': False, 'error': f'خطای پروکسی/کلودفلر (کد {response.status_code})'}
         except Exception:
             if attempt < 2: time.sleep(1.5); continue
             return {'status': False, 'error': "ارتباط با سامانه برقرار نشد"}
@@ -281,7 +277,7 @@ def register_food_user(phone_number: str, code: str, device_uid: str, first_name
 def refresh_short_token(short_refresh_token: str) -> dict:
     device_uid = str(uuid.uuid4())
     headers = BASE_HEADERS.copy()
-    headers.update({'authority': 'user.snappfood.ir'})
+    # هدر authority حذف شد تا فایروال به درخواست گیر ندهد
     payload = {
         "refreshToken": short_refresh_token, "grantType": "RefreshToken",
         "data": {
@@ -297,15 +293,17 @@ def refresh_short_token(short_refresh_token: str) -> dict:
             try: data = res.json()
             except ValueError:
                 if attempt < 2: time.sleep(1.5); continue
-                return {'status': False, 'error': f"مسدود (کد {res.status_code})"}
+                return {'status': False, 'error': f'پروکسی/فایروال (کد {res.status_code})'}
+                
             if res.status_code == 200:
                 resp_data = data.get("data", {}) or {}
                 new_access  = resp_data.get("accessToken")
                 new_refresh = resp_data.get("refreshToken") or short_refresh_token
                 if new_access: return {'status': True, 'data': {'accessToken': new_access, 'refreshToken': new_refresh}}
                 return {'status': False, 'error': 'عدم دریافت دسترسی جدید.'}
+                
             err_msg = data.get("error") or data.get("message") or "نامشخص"
-            return {'status': False, 'error': f"بروز مشکل: {err_msg}"}
+            return {'status': False, 'error': err_msg}
         except Exception as e:
             if attempt < 2: time.sleep(1.5); continue
             return {'status': False, 'error': 'ارتباط با سامانه برقرار نشد'}
@@ -313,11 +311,13 @@ def refresh_short_token(short_refresh_token: str) -> dict:
 def exchange_food_token_for_market_token(access_token: str, device_uid: str) -> dict:
     params = {"token": access_token, "sso_channel": SNAPP_MARKET_SSO_CHANNEL, **_get_express_params(device_uid)}
     try:
-        response = requests.get(f"{SNAPP_MARKET_BASE_URL}/mobile/v2/user/snapp-sso", params=params, headers=EXPRESS_HEADERS, verify=False, timeout=20)
+        # پروکسی به چکرها برگشت تا سرورهای خارجی (مثل Railway) بلاک نشن
+        response = requests.get(f"{SNAPP_MARKET_BASE_URL}/mobile/v2/user/snapp-sso", params=params, headers=EXPRESS_HEADERS, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=20)
         if response.status_code == 424: return {"status": False, "retryable": False, "error_code": "خطای ۴۲۴ (نیاز به آی‌پی ایران)"}
         if response.status_code != 200: return {"status": False, "retryable": response.status_code in {401, 403, 502}, "error_code": f"خطای دسترسی {response.status_code}"}
         try: payload = response.json() or {}
-        except ValueError: return {"status": False, "retryable": True, "error_code": "خطا در دریافت اطلاعات"}
+        except ValueError: return {"status": False, "retryable": True, "error_code": f"پروکسی/فایروال ({response.status_code})"}
+        
         market_token = payload.get("data", {}).get("oauth2_token", {}).get("access_token")
         if not market_token: return {"status": False, "retryable": False, "error_code": "دسترسی دریافت نشد"}
         return {"status": True, "access_token": market_token}
@@ -345,14 +345,14 @@ def fetch_market_purchase_status(market_access_token: str, device_uid: str) -> d
             else:
                 params.update({"page": "0", "size": "20", "split_page": "0"})
 
-            response = requests.get(url, params=params, headers=headers, verify=False, timeout=15)
+            response = requests.get(url, params=params, headers=headers, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=15)
             if response.status_code == 424:
                 return {"status": False, "retryable": False, "error_code": "خطای ۴۲۴"}
             if response.status_code != 200:
                 return {"status": False, "retryable": response.status_code in {401, 403, 502}, "error_code": f"خطا {response.status_code}"}
             
             try: payload = response.json() or {}
-            except ValueError: return {"status": False, "retryable": True, "error_code": "خطا در دریافت اطلاعات"}
+            except ValueError: return {"status": False, "retryable": True, "error_code": f"پروکسی/فایروال ({response.status_code})"}
             
             dt = payload.get("data", {})
             orders = dt.get("orders", []) if isinstance(dt, dict) else (dt if isinstance(dt, list) else [])
@@ -390,7 +390,7 @@ def check_account_purchases(record: dict) -> dict:
         new_refresh = refresh_data.get("refreshToken") or refresh_token
         if not refresh_result.get("status") or not new_access:
             err = refresh_result.get("error", "ناموفق")
-            return {"status": False, "error_code": f"خطا در تمدید: {err}"}
+            return {"status": False, "error_code": f"عدم تمدید ({err})"}
         access_token, refresh_token = new_access, new_refresh
         record["access_token"], record["refresh_token"], record["device_uid"] = new_access, new_refresh, device_uid
     return {"status": False, "error_code": "بررسی ناموفق"}
@@ -403,11 +403,11 @@ def fetch_market_vouchers(market_access_token: str, device_uid: str) -> dict:
     try:
         for page in range(1, DISCOUNT_CHECK_MAX_PAGES + 1):
             params = {"filterType": "all", "page": page, "pageSize": 10}
-            response = requests.get(f"{SNAPP_MARKET_BASE_URL}/belladonna/api/v1/vouchers", params=params, headers=headers, verify=False, timeout=20)
+            response = requests.get(f"{SNAPP_MARKET_BASE_URL}/belladonna/api/v1/vouchers", params=params, headers=headers, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=20)
             if response.status_code == 424: return {"status": False, "retryable": False, "error_code": "خطای ۴۲۴"}
             if response.status_code != 200: return {"status": False, "retryable": response.status_code in {401, 403, 502}, "error_code": f"خطا {response.status_code}"}
             try: payload = response.json() or {}
-            except ValueError: return {"status": False, "retryable": True, "error_code": "خطا در دریافت اطلاعات"}
+            except ValueError: return {"status": False, "retryable": True, "error_code": f"پروکسی/فایروال ({response.status_code})"}
             if isinstance(payload, dict):
                 page_items = payload.get("vouchers") or []
                 if isinstance(page_items, list): vouchers.extend(item for item in page_items if isinstance(item, dict))
@@ -432,13 +432,14 @@ def check_account_discounts(record: dict) -> dict:
             should_refresh = sso_result.get("retryable", False)
         if not should_refresh or attempt != 0 or not refresh_token:
             return {"status": False, "error_code": (voucher_result.get("error_code") if sso_result.get("status") else sso_result.get("error_code"))}
+            
         refresh_result = refresh_short_token(refresh_token)
         refresh_data = refresh_result.get("data") or {}
         new_access = refresh_data.get("accessToken")
         new_refresh = refresh_data.get("refreshToken") or refresh_token
         if not refresh_result.get("status") or not new_access:
             err = refresh_result.get("error", "ناموفق")
-            return {"status": False, "error_code": f"خطا در تمدید: {err}"}
+            return {"status": False, "error_code": f"عدم تمدید ({err})"}
         access_token, refresh_token = new_access, new_refresh
         record["access_token"], record["refresh_token"], record["device_uid"] = new_access, new_refresh, device_uid
     return {"status": False, "error_code": "بررسی ناموفق"}
