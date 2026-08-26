@@ -493,13 +493,22 @@ def build_purchase_report(results: list[dict], account_type: str) -> str:
     lines.extend(["", "=" * 50, f"تعداد کل اکانت‌های صفر: {zero_count}"])
     return "\n".join(lines)
 
-# --- تابع کلیدی رفع ارور و هنگی ویرایش پیام‌ها ---
-async def safe_edit_query(query, text, rm=None, parse_mode='Markdown'):
+# --- توابع جادویی برای نمایش پیام‌ها پایین صفحه ---
+async def send_as_new_message(query, text, rm=None, parse_mode='Markdown'):
+    """این تابع پیام قدیمی رو پاک میکنه و یه پیام جدید میفرسته تا همیشه پایین چت باشه"""
     try:
-        # اگر پیام متنی باشه راحت ادیت میشه
+        await query.message.delete()
+    except Exception:
+        # اگر پاک نشد، حداقل دکمه‌هاشو برمیداریم که قاطی نشه
+        try: await query.edit_message_reply_markup(reply_markup=None)
+        except Exception: pass
+    await query.message.reply_text(text, reply_markup=rm, parse_mode=parse_mode)
+
+async def safe_edit_query(query, text, rm=None, parse_mode='Markdown'):
+    """برای وقت‌هایی که می‌خوایم همون پیام درجا ادیت بشه (مثل ورق زدن صفحات)"""
+    try:
         if query.message.text:
             await query.edit_message_text(text, reply_markup=rm, parse_mode=parse_mode)
-        # اگر زیر فایل کلیک کرده باشن، فایل رو پاک نمی‌کنیم، فقط دکمه رو ازش می‌گیریم و پیام متنی جدید میدیم
         else:
             await query.edit_message_reply_markup(reply_markup=None)
             await query.message.reply_text(text, reply_markup=rm, parse_mode=parse_mode)
@@ -649,7 +658,6 @@ async def process_discount_check(chat_id: int, bot, account_type: str, mode: str
 
         doc = io.BytesIO(build_discount_report(results, account_type).encode("utf-8"))
         doc.name = f"Discounts_{account_type}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
-        # 🟢 فایل رو می‌فرسته اما پنل رو جدا تو یه پیام جدید میده تا دیگه موقع کلیک هنگ نکنه!
         await bot.send_document(chat_id, document=doc, caption=f"✅ بررسی تخفیف‌ها پایان یافت.\nموارد بررسی شده: `{len(keys)}`", parse_mode="Markdown")
         await bot.send_message(chat_id, text="⚙️  *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode='Markdown')
 
@@ -728,7 +736,6 @@ async def process_purchase_check(chat_id: int, bot, account_type: str, mode: str
 
         doc = io.BytesIO(build_purchase_report(results, account_type).encode("utf-8"))
         doc.name = f"Zero_Accounts_{account_type}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
-        # 🟢 جداسازی پنل مدیریت از فایل اینجا هم اعمال شد
         await bot.send_document(chat_id, document=doc, caption=f"✅ بررسی سابقه خرید پایان یافت.\nموارد بررسی شده: `{len(keys)}`\n\n🎁 اکانت صفر: `{z_count}`\n⚠️ خریددار: `{p_count}`\n❌ خطا/مسدود: `{e_count}`", parse_mode="Markdown")
         await bot.send_message(chat_id, text="⚙️  *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode='Markdown')
 
@@ -851,7 +858,7 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        await safe_edit_query(query, "🚫 عملیات لغو شد.\n/start را ارسال کنید.")
+        await send_as_new_message(query, "🚫 عملیات لغو شد.\n/start را ارسال کنید.")
     else: await update.message.reply_text("🚫 عملیات لغو شد.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
@@ -860,7 +867,7 @@ async def exit_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        await safe_edit_query(query, "⚙️  *پنل مدیریت*", kb_admin_main())
+        await send_as_new_message(query, "⚙️  *پنل مدیریت*", kb_admin_main())
     else: await update.message.reply_text("⚙️  *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode="Markdown")
     return ConversationHandler.END
 
@@ -869,7 +876,7 @@ async def start_raw_license_callback(update: Update, context: ContextTypes.DEFAU
     query = update.callback_query
     await query.answer()
     context.user_data.clear(); context.user_data['session_phones'] = []
-    await safe_edit_query(query, "➕  *تولید لینک ورود جدید*\n\n📱  شماره موبایل مشتری را وارد کنید:\n_(فرمت: `09XXXXXXXXX`)_", kb_cancel())
+    await send_as_new_message(query, "➕  *تولید لینک ورود جدید*\n\n📱  شماره موبایل مشتری را وارد کنید:\n_(فرمت: `09XXXXXXXXX`)_", kb_cancel())
     return ASK_PHONE
 
 async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -933,7 +940,7 @@ async def old_license_start(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
     context.user_data.clear(); context.user_data['old_session_phones'] = []
-    await safe_edit_query(query, "➕  *ثبت اکانت قدیمی*\n\n📱  شماره موبایل:", kb_cancel())
+    await send_as_new_message(query, "➕  *ثبت اکانت قدیمی*\n\n📱  شماره موبایل:", kb_cancel())
     return OLD_ASK_PHONE
 
 async def old_ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -972,7 +979,7 @@ async def old_resend_code_callback(update: Update, context: ContextTypes.DEFAULT
 async def old_next_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await safe_edit_query(query, "📱 شماره اکانت قدیمی بعدی را وارد کنید:", kb_cancel())
+    await send_as_new_message(query, "📱 شماره اکانت قدیمی بعدی را وارد کنید:", kb_cancel())
     return OLD_ASK_PHONE
 
 async def old_finish_session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -980,14 +987,14 @@ async def old_finish_session_callback(update: Update, context: ContextTypes.DEFA
     await query.answer()
     phones = context.user_data.get('old_session_phones', [])
     context.user_data.clear()
-    await safe_edit_query(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
+    await send_as_new_message(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
     return ConversationHandler.END
 
 # --- چرخه اکانت‌های خام ---
 async def next_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await safe_edit_query(query, "📱 شماره مشتری بعدی را وارد کنید:", kb_cancel())
+    await send_as_new_message(query, "📱 شماره مشتری بعدی را وارد کنید:", kb_cancel())
     return ASK_PHONE
 
 async def finish_session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -995,13 +1002,13 @@ async def finish_session_callback(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     phones = context.user_data.get('session_phones', [])
     context.user_data.clear()
-    await safe_edit_query(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
+    await send_as_new_message(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
     return ConversationHandler.END
 
 async def start_batch_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await safe_edit_query(query, "🗑 لطفاً تعداد خطوط قدیمی جهت حذف (از ته صف) را بفرستید:", kb_cancel())
+    await send_as_new_message(query, "🗑 لطفاً تعداد خطوط قدیمی جهت حذف (از ته صف) را بفرستید:", kb_cancel())
     return ASK_BATCH_DELETE_COUNT
 
 async def process_batch_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1018,7 +1025,7 @@ async def process_batch_delete(update: Update, context: ContextTypes.DEFAULT_TYP
 async def start_rebuild(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await safe_edit_query(query, "🔄 *بازسازی اتصال‌ها*\n\nتعداد اکانت‌هایی که می‌خواهید بازسازی شوند را وارد کنید:\n_(از جدیدترین اکانت‌ها به سمت قدیمی‌ها انجام می‌شود)_", kb_cancel())
+    await send_as_new_message(query, "🔄 *بازسازی اتصال‌ها*\n\nتعداد اکانت‌هایی که می‌خواهید بازسازی شوند را وارد کنید:\n_(از جدیدترین اکانت‌ها به سمت قدیمی‌ها انجام می‌شود)_", kb_cancel())
     return ASK_REBUILD_COUNT
 
 async def process_rebuild_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1044,7 +1051,7 @@ async def start_custom_checker(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['checker_acc_type'] = parts[3]
     
     title = "تخفیف" if parts[2] == "discount" else "سابقه خرید"
-    await safe_edit_query(query, f"🔢 *بررسی تعداد دلخواه - چکر {title}*\n\nلطفاً تعداد اکانت‌هایی که می‌خواهید بررسی شوند را وارد کنید:\n_(از جدیدترین اکانت‌ها به سمت قدیمی‌ها انتخاب می‌شوند)_", kb_cancel())
+    await send_as_new_message(query, f"🔢 *بررسی تعداد دلخواه - چکر {title}*\n\nلطفاً تعداد اکانت‌هایی که می‌خواهید بررسی شوند را وارد کنید:\n_(از جدیدترین اکانت‌ها به سمت قدیمی‌ها انتخاب می‌شوند)_", kb_cancel())
     return ASK_CHECKER_COUNT
 
 async def process_custom_checker_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1070,7 +1077,7 @@ async def process_custom_checker_count(update: Update, context: ContextTypes.DEF
 async def start_auto_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await safe_edit_query(query, "⏳ *تنظیم زمان چکر خودکار*\n\nلطفاً فاصله زمانی بین هر دور بررسی را به **ساعت** وارد کنید:\n_(مثلاً وارد کنید `24` برای روزی یک‌بار)_", kb_cancel())
+    await send_as_new_message(query, "⏳ *تنظیم زمان چکر خودکار*\n\nلطفاً فاصله زمانی بین هر دور بررسی را به **ساعت** وارد کنید:\n_(مثلاً وارد کنید `24` برای روزی یک‌بار)_", kb_cancel())
     return ASK_AUTO_INTERVAL
 
 async def process_auto_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1095,19 +1102,18 @@ async def process_auto_interval(update: Update, context: ContextTypes.DEFAULT_TY
         
     return ConversationHandler.END
 
-# 🟢 مدیریت کلیک‌های پنل - این بخش کاملاً در برابر کرش و هنگ کردن مقاوم شد
+# 🟢 مدیریت کلیک‌های پنل
 async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id not in ALLOWED_USER_IDS: 
         return await query.answer("⛔️ دسترسی ندارید.", show_alert=True)
         
-    # دستور حیاتی برای جلوگیری از هنگ کردن (لودینگ ممتد دکمه‌ها)
     await query.answer() 
     data = query.data
 
     if data == 'admin_open' or data == 'admin_back':
         stats = get_database_account_stats()
-        await safe_edit_query(query, f"⚙️  *پنل مدیریت*\n\n📊  مجموع لینک‌ها: `{stats['total']}`\n🟠  خام: `{stats['raw']}` | 🔵  قدیمی: `{stats['old']}`", kb_admin_main())
+        await send_as_new_message(query, f"⚙️  *پنل مدیریت*\n\n📊  مجموع لینک‌ها: `{stats['total']}`\n🟠  خام: `{stats['raw']}` | 🔵  قدیمی: `{stats['old']}`", kb_admin_main())
     elif data in ['admin_get_list_raw', 'admin_get_list_old']:
         acc_type = "raw" if data == 'admin_get_list_raw' else "old"
         accounts = sorted([json.loads(redis_client.get(k) or "{}") | {"_k": k} for k in redis_client.keys("snappfood:license:*") if get_account_type(json.loads(redis_client.get(k) or "{}")) == acc_type], key=lambda x: x.get("created_at", ""))
@@ -1166,21 +1172,19 @@ async def run_bot():
     
     app.add_handler(CommandHandler("start", start))
     
-    # 1. هندلر بازسازی
+    # 🟢 هندلرهای مراحل - لغو در تمام چرخه ها اضافه شد
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_rebuild, pattern='^admin_rebuild_start$')],
         states={ASK_REBUILD_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_rebuild_count)]},
-        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$'), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    # 2. هندلر حذف گروهی
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_batch_delete, pattern='^batch_delete_old_start$')],
         states={ASK_BATCH_DELETE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_batch_delete)]},
-        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$'), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    # 3. هندلر اکانت قدیمی
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(old_license_start, pattern='^admin_old_license$')],
         states={
@@ -1194,10 +1198,9 @@ async def run_bot():
                 CallbackQueryHandler(old_finish_session_callback, pattern='^old_finish_session$')
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$'), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    # 4. هندلر لینک جدید
     app.add_handler(ConversationHandler(
         entry_points=[
             CallbackQueryHandler(start_raw_license_callback, pattern='^admin_new_license$')
@@ -1217,24 +1220,21 @@ async def run_bot():
                 CallbackQueryHandler(finish_session_callback, pattern='^finish_session$')
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$'), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    # 5. هندلر بررسی تعداد دلخواه برای چکرها 
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_custom_checker, pattern='^admin_checkcustom_')],
         states={ASK_CHECKER_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_custom_checker_count)]},
-        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$'), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
 
-    # 6. هندلر تنظیم زمان چکر خودکار 
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_auto_interval, pattern='^admin_autocheck_setint$')],
         states={ASK_AUTO_INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_auto_interval)]},
-        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$'), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    # 7. بقیه دکمه‌های پنل
     app.add_handler(CallbackQueryHandler(admin_callbacks, pattern="^admin_"))
     
     await app.initialize()
