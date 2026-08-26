@@ -107,6 +107,8 @@ purchase_check_lock = asyncio.Lock()
 # ======================== وب‌سرور (پاسخ‌دهنده لینک‌ها) ========================
 app = FastAPI(title="Baran Link System", docs_url=None, redoc_url=None)
 
+# 🟢 مسیر دوگانه: حالا هم با آدرس اصلی و هم با آدرس api جواب میده!
+@app.get("/{link_token}")
 @app.get("/api/BaranToken/{link_token}")
 async def get_token(link_token: str, x_api_key: Optional[str] = Header(default=None)):
     if API_SECRET_KEY and x_api_key != API_SECRET_KEY:
@@ -499,7 +501,6 @@ async def send_as_new_message(query, text, rm=None, parse_mode='Markdown'):
     try:
         await query.message.delete()
     except Exception:
-        # اگر پاک نشد، حداقل دکمه‌هاشو برمیداریم که قاطی نشه
         try: await query.edit_message_reply_markup(reply_markup=None)
         except Exception: pass
     await query.message.reply_text(text, reply_markup=rm, parse_mode=parse_mode)
@@ -987,7 +988,7 @@ async def old_finish_session_callback(update: Update, context: ContextTypes.DEFA
     await query.answer()
     phones = context.user_data.get('old_session_phones', [])
     context.user_data.clear()
-    await send_as_new_message(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
+    await safe_edit_query(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
     return ConversationHandler.END
 
 # --- چرخه اکانت‌های خام ---
@@ -1002,7 +1003,7 @@ async def finish_session_callback(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     phones = context.user_data.get('session_phones', [])
     context.user_data.clear()
-    await send_as_new_message(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
+    await safe_edit_query(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
     return ConversationHandler.END
 
 async def start_batch_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
