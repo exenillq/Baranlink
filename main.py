@@ -479,7 +479,7 @@ def build_purchase_report(results: list[dict], account_type: str) -> str:
     for r in results:
         if r.get("status") == "ok" and not r.get("has_purchase"):
             zero_count += 1
-            lines.append(f"شماره: {r.get('phone_number')} | لینک: https://baranlink.cyou/{r.get('link_token')}")
+            lines.append(f"شماره: {r.get('phone_number')} | لینک: https://ernull.bond/{r.get('link_token')}")
             
     lines.extend(["", "=" * 50, f"تعداد کل اکانت‌های صفر: {zero_count}"])
     return "\n".join(lines)
@@ -536,7 +536,7 @@ async def auto_discount_checker_loop(bot):
                             msg = (
                                 f"🎉 *تخفیف جدید پیدا شد! (چکر خودکار)*\n\n"
                                 f"📱 شماره: `{phone}`\n"
-                                f"🔗 لینک: `https://baranlink.cyou/{stored_token}`\n"
+                                f"🔗 لینک: `https://ernull.bond/{stored_token}`\n"
                                 f"🎁 تعداد تخفیف: `{len(vouchers)}`\n"
                             )
                             for v in vouchers:
@@ -886,8 +886,8 @@ async def ask_code_step_2(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await wait_msg.delete()
         link_token = generate_link_token("raw")
         redis_client.set(f"snappfood:license:{link_token}", json.dumps({"phone_number": context.user_data['phone_number'], "device_uid": context.user_data['device_uid'], "access_token": access, "refresh_token": res.get('data', {}).get('refreshToken'), "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "link_token": link_token, "account_type": "raw"}, ensure_ascii=False))
-        context.user_data.setdefault('session_phones', []).append(f"`https://baranlink.cyou/{link_token}`")
-        await update.message.reply_text(f"✅  *لینک مشتری:*\n`https://baranlink.cyou/{link_token}`\n\nمرحله بعد:", reply_markup=kb_next_or_finish(), parse_mode='Markdown')
+        context.user_data.setdefault('session_phones', []).append(f"`https://ernull.bond/{link_token}`")
+        await update.message.reply_text(f"✅  *لینک مشتری:*\n`https://ernull.bond/{link_token}`\n\nمرحله بعد:", reply_markup=kb_next_or_finish(), parse_mode='Markdown')
         return ASK_NEXT_ACTION
     await wait_msg.edit_text("⚠️ کد نامعتبر است."); return ASK_CODE_STEP_2
 
@@ -929,7 +929,7 @@ async def old_ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await wait_msg.delete()
         link_token = generate_link_token("old")
         redis_client.set(f"snappfood:license:{link_token}", json.dumps({"phone_number": context.user_data['phone_number'], "device_uid": context.user_data['device_uid'], "access_token": access, "refresh_token": res.get('data', {}).get('refreshToken'), "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "link_token": link_token, "account_type": "old"}, ensure_ascii=False))
-        await update.message.reply_text(f"✅  *لینک ثبت شد:*\n`https://baranlink.cyou/{link_token}`", reply_markup=kb_back_to_admin(), parse_mode='Markdown')
+        await update.message.reply_text(f"✅  *لینک ثبت شد:*\n`https://ernull.bond/{link_token}`", reply_markup=kb_back_to_admin(), parse_mode='Markdown')
         return ConversationHandler.END
     await wait_msg.edit_text("⚠️ کد نامعتبر است."); return OLD_ASK_CODE
 
@@ -1068,7 +1068,7 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"⏳ درحال ارسال {len(accounts)} اکانت...")
         for idx, chunk in enumerate(chunks, 1):
             msg = f"📦 <b>دسته {idx}</b>\n" + "\n".join([f"{i}. {c.get('phone_number')}" for i, c in enumerate(chunk, 1)])
-            msg += "\n\n<code>" + "\n".join([f"https://baranlink.cyou/{c.get('link_token', c.get('_k').split(':')[-1])}" for c in chunk]) + "</code>"
+            msg += "\n\n<code>" + "\n".join([f"https://ernull.bond/{c.get('link_token', c.get('_k').split(':')[-1])}" for c in chunk]) + "</code>"
             await context.bot.send_message(query.message.chat_id, msg, parse_mode='HTML')
             await asyncio.sleep(0.5)
         await context.bot.send_message(query.message.chat_id, "✅ ارسال تمام شد.", reply_markup=kb_admin_main())
@@ -1106,7 +1106,7 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for k in redis_client.keys("snappfood:license:*"):
             r = json.loads(redis_client.get(k) or "{}")
             t = r.get('link_token', k.split(':')[-1])
-            lines.append(f"Link: https://baranlink.cyou/{t} | Phone: {r.get('phone_number')} | Access: {r.get('access_token') if data == 'admin_extract_tokens' else 'Hidden'}")
+            lines.append(f"Link: https://ernull.bond/{t} | Phone: {r.get('phone_number')} | Access: {r.get('access_token') if data == 'admin_extract_tokens' else 'Hidden'}")
         doc = io.BytesIO("\n".join(lines).encode('utf-8'))
         doc.name = "Backup.txt"
         await query.message.reply_document(doc, caption="📥 فایل بکاپ سیستم")
