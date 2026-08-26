@@ -27,13 +27,12 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-# --- تنظیم دامنه اصلی 시스템 ---
+# --- تنظیم دامنه اصلی ---
 DOMAIN_URL = os.getenv("DOMAIN_URL", "https://Ernull.bond")
 
-# --- تولید توکن ورود اختصاصی هوشمند (لینک) ---
+# --- تولید لایسنس اختصاصی هوشمند ---
 def generate_link_token(account_type="raw"):
-    prefix = "R" if account_type == "raw" else "O"
-    return f"{prefix}-{str(uuid.uuid4())[:8].upper()}{str(uuid.uuid4())[:8].upper()}"
+    return f"BARANLINK-{str(uuid.uuid4())[:8].upper()}-{str(uuid.uuid4())[:8].upper()}"
 
 FIRST_NAMES = ["علی", "محمد", "یوسف", "امیر", "حسین", "رضا", "مهدی", "سارا", "زهرا", "مریم", "علیرضا", "عرفان", "نیما"]
 LAST_NAMES = ["راد", "تهرانی", "حسینی", "پارسا", "دانش", "آریا", "محمدی", "کریمی", "احمدی", "ت زاده", "کمالی", "مجیدی"]
@@ -296,7 +295,7 @@ def refresh_short_token(short_refresh_token: str) -> dict:
                 new_access  = resp_data.get("accessToken")
                 new_refresh = resp_data.get("refreshToken") or short_refresh_token
                 if new_access: return {'status': True, 'data': {'accessToken': new_access, 'refreshToken': new_refresh}}
-                return {'status': False, 'error': 'عدم دریافت توکن جدید.'}
+                return {'status': False, 'error': 'عدم دریافت لایسنس جدید.'}
             err_msg = data.get("error") or data.get("message") or "نامشخص"
             return {'status': False, 'error': f"بروز مشکل: {err_msg}"}
         except Exception as e:
@@ -491,7 +490,7 @@ async def safe_edit_progress(progress_message, text: str) -> None:
     try: await progress_message.edit_text(text, parse_mode="Markdown")
     except Exception: pass
 
-# ======================== تسک چکر خودکار پس‌زمینه 🤖 ========================
+# ======================== تسک چکر خودکار پس‌زمینه ========================
 async def auto_discount_checker_loop(bot):
     await asyncio.sleep(10) 
     
@@ -730,7 +729,7 @@ async def process_database_rebuild(chat_id: int, bot, count: int):
     target_keys = [k for k, _ in accounts[:count]]
 
     success_count, fail_count = 0, 0
-    await bot.send_message(chat_id, f"🔄 *شروع بازسازی توکن‌ها*\nمجموع درخواست: `{len(target_keys)}`\n⏳ صبر کنید...", parse_mode='Markdown')
+    await bot.send_message(chat_id, f"🔄 *شروع بازسازی اتصال‌ها*\nمجموع درخواست: `{len(target_keys)}`\n⏳ صبر کنید...", parse_mode='Markdown')
     for key in target_keys:
         try:
             raw = redis_client.get(key)
@@ -792,6 +791,29 @@ def kb_admin_main() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📥  فایل بکاپ", callback_data='admin_extract'), InlineKeyboardButton("🗑  حذف لینک", callback_data='admin_delete_hint')]
     ])
 
+# ======================== هندلر اصلی و استارت ========================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id
+    logger.info(f"➡️ دریافت پیام استارت از آیدی: {user_id}")
+    
+    # سیستم امنیتی: اگر آیدی در لیست نبود مستقیماً پیام می‌دهد
+    if user_id not in ALLOWED_USER_IDS:
+        logger.warning(f"⛔️ آیدی {user_id} مجاز نیست!")
+        await update.message.reply_text(
+            f"⛔️ شما دسترسی به این پنل را ندارید.\n"
+            f"آیدی عددی شما: `{user_id}`\n\n"
+            f"اگر ادمین هستید، باید دقیقاً همین عدد را در متغیر ALLOWED_USER_IDS سرور قرار دهید.", 
+            parse_mode="Markdown"
+        )
+        return ConversationHandler.END
+
+    context.user_data.clear()
+    stats = get_database_account_stats()
+    text = (f"⚙️  *پنل مدیریت Baran*\n\n🗄  وضعیت دیتابیس: {'🟢 متصل' if redis_client else '🔴 قطع'}\n"
+            f"📊  مجموع لینک‌ها: `{stats['total']}`\n🟠  خام: `{stats['raw']}` | 🔵  قدیمی: `{stats['old']}`")
+    await update.message.reply_text(text, reply_markup=kb_admin_main(), parse_mode='Markdown')
+    return ConversationHandler.END
+
 # ======================== مراحل تلگرام ========================
 ASK_PHONE, ASK_CODE_STEP_1, ASK_CODE_STEP_2, ASK_NEXT_ACTION = range(4)
 OLD_ASK_PHONE, OLD_ASK_CODE = range(4, 6)
@@ -814,15 +836,6 @@ async def exit_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.callback_query.answer()
         await update.callback_query.edit_message_text("⚙️ *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode="Markdown")
     else: await update.message.reply_text("⚙️ *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode="Markdown")
-    return ConversationHandler.END
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.from_user.id not in ALLOWED_USER_IDS: return ConversationHandler.END
-    context.user_data.clear()
-    stats = get_database_account_stats()
-    text = (f"⚙️  *پنل مدیریت Baran*\n\n🗄  وضعیت دیتابیس: {'🟢 متصل' if redis_client else '🔴 قطع'}\n"
-            f"📊  مجموع لینک‌ها: `{stats['total']}`\n🟠  خام: `{stats['raw']}` | 🔵  قدیمی: `{stats['old']}`")
-    await update.message.reply_text(text, reply_markup=kb_admin_main(), parse_mode='Markdown')
     return ConversationHandler.END
 
 # --- توابع ربات تلگرام (ثبت و لاگین) ---
@@ -1101,20 +1114,26 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ======================== اجرای ربات و سرور ========================
 async def run_bot():
+    logger.info(f"🔍 توکن ربات: {'ثبت شده' if TELEGRAM_BOT_TOKEN else 'خالی!!!'}")
+    logger.info(f"🔍 آیدی‌های مجاز: {ALLOWED_USER_IDS}")
+    
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # هندلر استارت مستقل شده برای رفع باگ سکوت
+    app.add_handler(CommandHandler("start", start))
     
     # 1. هندلر بازسازی
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_rebuild, pattern='^admin_rebuild_start$')],
         states={ASK_REBUILD_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_rebuild_count)]},
-        fallbacks=[CommandHandler("cancel", cancel_action), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
     ))
     
     # 2. هندلر حذف گروهی
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_batch_delete, pattern='^batch_delete_old_start$')],
         states={ASK_BATCH_DELETE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_batch_delete)]},
-        fallbacks=[CommandHandler("cancel", cancel_action), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
     ))
     
     # 3. هندلر اکانت قدیمی
@@ -1127,13 +1146,12 @@ async def run_bot():
                 CallbackQueryHandler(old_resend_code_callback, pattern='^old_resend_code$')
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel_action), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
     ))
     
     # 4. هندلر لینک جدید
     app.add_handler(ConversationHandler(
         entry_points=[
-            CommandHandler("start", start),
             CallbackQueryHandler(start_raw_license_callback, pattern='^admin_new_license$')
         ],
         states={
@@ -1151,29 +1169,35 @@ async def run_bot():
                 CallbackQueryHandler(finish_session_callback, pattern='^finish_session$')
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel_action), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
     ))
     
     # 5. هندلر بررسی تعداد دلخواه برای چکرها 
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_custom_checker, pattern='^admin_checkcustom_')],
         states={ASK_CHECKER_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_custom_checker_count)]},
-        fallbacks=[CommandHandler("cancel", cancel_action), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
     ))
 
     # 6. هندلر تنظیم زمان چکر خودکار 
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_auto_interval, pattern='^admin_autocheck_setint$')],
         states={ASK_AUTO_INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_auto_interval)]},
-        fallbacks=[CommandHandler("cancel", cancel_action), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
     ))
     
     # 7. بقیه دکمه‌های پنل
     app.add_handler(CallbackQueryHandler(admin_callbacks, pattern="^admin_"))
     
-    await app.initialize(); await app.start(); await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    await app.initialize()
+    await app.start()
     
-    # راه‌اندازی تسک چکر خودکار پس از لود شدن ربات
+    # مهم‌ترین بخش برای رفع مشکل سکوت ربات در Railway:
+    logger.info("🗑 در حال پاک‌سازی کش و تداخلات تلگرام...")
+    await app.bot.delete_webhook(drop_pending_updates=True)
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    
+    logger.info("🤖 ربات با موفقیت به سرورهای تلگرام متصل شد و منتظر دستور شماست...")
     asyncio.create_task(auto_discount_checker_loop(app.bot))
     
     await asyncio.Event().wait()
