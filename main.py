@@ -277,7 +277,6 @@ def register_food_user(phone_number: str, code: str, device_uid: str, first_name
 def refresh_short_token(short_refresh_token: str) -> dict:
     device_uid = str(uuid.uuid4())
     headers = BASE_HEADERS.copy()
-    # هدر authority حذف شد تا فایروال به درخواست گیر ندهد
     payload = {
         "refreshToken": short_refresh_token, "grantType": "RefreshToken",
         "data": {
@@ -311,7 +310,6 @@ def refresh_short_token(short_refresh_token: str) -> dict:
 def exchange_food_token_for_market_token(access_token: str, device_uid: str) -> dict:
     params = {"token": access_token, "sso_channel": SNAPP_MARKET_SSO_CHANNEL, **_get_express_params(device_uid)}
     try:
-        # پروکسی به چکرها برگشت تا سرورهای خارجی (مثل Railway) بلاک نشن
         response = requests.get(f"{SNAPP_MARKET_BASE_URL}/mobile/v2/user/snapp-sso", params=params, headers=EXPRESS_HEADERS, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=20)
         if response.status_code == 424: return {"status": False, "retryable": False, "error_code": "خطای ۴۲۴ (نیاز به آی‌پی ایران)"}
         if response.status_code != 200: return {"status": False, "retryable": response.status_code in {401, 403, 502}, "error_code": f"خطای دسترسی {response.status_code}"}
@@ -495,6 +493,19 @@ def build_purchase_report(results: list[dict], account_type: str) -> str:
     lines.extend(["", "=" * 50, f"تعداد کل اکانت‌های صفر: {zero_count}"])
     return "\n".join(lines)
 
+# --- تابع کلیدی رفع ارور و هنگی ویرایش پیام‌ها ---
+async def safe_edit_query(query, text, rm=None, parse_mode='Markdown'):
+    try:
+        # اگر پیام متنی باشه راحت ادیت میشه
+        if query.message.text:
+            await query.edit_message_text(text, reply_markup=rm, parse_mode=parse_mode)
+        # اگر زیر فایل کلیک کرده باشن، فایل رو پاک نمی‌کنیم، فقط دکمه رو ازش می‌گیریم و پیام متنی جدید میدیم
+        else:
+            await query.edit_message_reply_markup(reply_markup=None)
+            await query.message.reply_text(text, reply_markup=rm, parse_mode=parse_mode)
+    except Exception as e:
+        logger.error(f"Error in safe_edit_query: {e}")
+
 async def safe_edit_progress(progress_message, text: str) -> None:
     try: await progress_message.edit_text(text, parse_mode="Markdown")
     except Exception: pass
@@ -638,7 +649,9 @@ async def process_discount_check(chat_id: int, bot, account_type: str, mode: str
 
         doc = io.BytesIO(build_discount_report(results, account_type).encode("utf-8"))
         doc.name = f"Discounts_{account_type}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
-        await bot.send_document(chat_id, document=doc, caption=f"✅ بررسی تخفیف‌ها پایان یافت.\nموارد بررسی شده: `{len(keys)}`", parse_mode="Markdown", reply_markup=kb_admin_main())
+        # 🟢 فایل رو می‌فرسته اما پنل رو جدا تو یه پیام جدید میده تا دیگه موقع کلیک هنگ نکنه!
+        await bot.send_document(chat_id, document=doc, caption=f"✅ بررسی تخفیف‌ها پایان یافت.\nموارد بررسی شده: `{len(keys)}`", parse_mode="Markdown")
+        await bot.send_message(chat_id, text="⚙️  *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode='Markdown')
 
 async def process_purchase_check(chat_id: int, bot, account_type: str, mode: str = "all", count: int = 0) -> None:
     async with purchase_check_lock:
@@ -715,7 +728,9 @@ async def process_purchase_check(chat_id: int, bot, account_type: str, mode: str
 
         doc = io.BytesIO(build_purchase_report(results, account_type).encode("utf-8"))
         doc.name = f"Zero_Accounts_{account_type}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
-        await bot.send_document(chat_id, document=doc, caption=f"✅ بررسی سابقه خرید پایان یافت.\nموارد بررسی شده: `{len(keys)}`\n\n🎁 اکانت صفر: `{z_count}`\n⚠️ خریددار: `{p_count}`\n❌ خطا/مسدود: `{e_count}`", parse_mode="Markdown", reply_markup=kb_admin_main())
+        # 🟢 جداسازی پنل مدیریت از فایل اینجا هم اعمال شد
+        await bot.send_document(chat_id, document=doc, caption=f"✅ بررسی سابقه خرید پایان یافت.\nموارد بررسی شده: `{len(keys)}`\n\n🎁 اکانت صفر: `{z_count}`\n⚠️ خریددار: `{p_count}`\n❌ خطا/مسدود: `{e_count}`", parse_mode="Markdown")
+        await bot.send_message(chat_id, text="⚙️  *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode='Markdown')
 
 async def process_database_rebuild(chat_id: int, bot, count: int):
     if not redis_client:
@@ -834,24 +849,27 @@ ASK_AUTO_INTERVAL = 10
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text("🚫 عملیات لغو شد.\n/start را ارسال کنید.")
+        query = update.callback_query
+        await query.answer()
+        await safe_edit_query(query, "🚫 عملیات لغو شد.\n/start را ارسال کنید.")
     else: await update.message.reply_text("🚫 عملیات لغو شد.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 async def exit_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text("⚙️ *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode="Markdown")
-    else: await update.message.reply_text("⚙️ *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode="Markdown")
+        query = update.callback_query
+        await query.answer()
+        await safe_edit_query(query, "⚙️  *پنل مدیریت*", kb_admin_main())
+    else: await update.message.reply_text("⚙️  *پنل مدیریت*", reply_markup=kb_admin_main(), parse_mode="Markdown")
     return ConversationHandler.END
 
 # --- توابع ربات تلگرام (ثبت و ورود) ---
 async def start_raw_license_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer()
+    query = update.callback_query
+    await query.answer()
     context.user_data.clear(); context.user_data['session_phones'] = []
-    await update.callback_query.edit_message_text("➕  *تولید لینک ورود جدید*\n\n📱  شماره موبایل مشتری را وارد کنید:\n_(فرمت: `09XXXXXXXXX`)_", reply_markup=kb_cancel(), parse_mode='Markdown')
+    await safe_edit_query(query, "➕  *تولید لینک ورود جدید*\n\n📱  شماره موبایل مشتری را وارد کنید:\n_(فرمت: `09XXXXXXXXX`)_", kb_cancel())
     return ASK_PHONE
 
 async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -912,8 +930,10 @@ async def resend_code_2_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 # --- بخش اکانت قدیمی با چرخه تکرار ---
 async def old_license_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer(); context.user_data.clear(); context.user_data['old_session_phones'] = []
-    await update.callback_query.edit_message_text("➕  *ثبت اکانت قدیمی*\n\n📱  شماره موبایل:", reply_markup=kb_cancel(), parse_mode='Markdown')
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear(); context.user_data['old_session_phones'] = []
+    await safe_edit_query(query, "➕  *ثبت اکانت قدیمی*\n\n📱  شماره موبایل:", kb_cancel())
     return OLD_ASK_PHONE
 
 async def old_ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -950,26 +970,39 @@ async def old_resend_code_callback(update: Update, context: ContextTypes.DEFAULT
     return OLD_ASK_CODE
 
 async def old_next_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.edit_message_text(f"📱 شماره اکانت قدیمی بعدی را وارد کنید:", reply_markup=kb_cancel()); return OLD_ASK_PHONE
+    query = update.callback_query
+    await query.answer()
+    await safe_edit_query(query, "📱 شماره اکانت قدیمی بعدی را وارد کنید:", kb_cancel())
+    return OLD_ASK_PHONE
 
 async def old_finish_session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
     phones = context.user_data.get('old_session_phones', [])
     context.user_data.clear()
-    await update.callback_query.edit_message_text(f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones), parse_mode='Markdown')
+    await safe_edit_query(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
     return ConversationHandler.END
 
 # --- چرخه اکانت‌های خام ---
 async def next_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.edit_message_text(f"📱 شماره مشتری بعدی را وارد کنید:", reply_markup=kb_cancel()); return ASK_PHONE
+    query = update.callback_query
+    await query.answer()
+    await safe_edit_query(query, "📱 شماره مشتری بعدی را وارد کنید:", kb_cancel())
+    return ASK_PHONE
 
 async def finish_session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
     phones = context.user_data.get('session_phones', [])
     context.user_data.clear()
-    await update.callback_query.edit_message_text(f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones), parse_mode='Markdown')
+    await safe_edit_query(query, f"📦 *لینک‌های صادر شده*\n\n" + "\n\n".join(phones))
     return ConversationHandler.END
 
 async def start_batch_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.edit_message_text("🗑 لطفاً تعداد خطوط قدیمی جهت حذف (از ته صف) را بفرستید:", reply_markup=kb_cancel()); return ASK_BATCH_DELETE_COUNT
+    query = update.callback_query
+    await query.answer()
+    await safe_edit_query(query, "🗑 لطفاً تعداد خطوط قدیمی جهت حذف (از ته صف) را بفرستید:", kb_cancel())
+    return ASK_BATCH_DELETE_COUNT
 
 async def process_batch_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     count = int(update.message.text.strip()) if update.message.text.strip().isdigit() else 0
@@ -983,13 +1016,9 @@ async def process_batch_delete(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # --- هندلرهای مربوط به بازسازی ---
 async def start_rebuild(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "🔄 *بازسازی اتصال‌ها*\n\n"
-        "تعداد اکانت‌هایی که می‌خواهید بازسازی شوند را وارد کنید:\n"
-        "_(از جدیدترین اکانت‌ها به سمت قدیمی‌ها انجام می‌شود)_",
-        reply_markup=kb_cancel(), parse_mode='Markdown'
-    )
+    query = update.callback_query
+    await query.answer()
+    await safe_edit_query(query, "🔄 *بازسازی اتصال‌ها*\n\nتعداد اکانت‌هایی که می‌خواهید بازسازی شوند را وارد کنید:\n_(از جدیدترین اکانت‌ها به سمت قدیمی‌ها انجام می‌شود)_", kb_cancel())
     return ASK_REBUILD_COUNT
 
 async def process_rebuild_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1015,12 +1044,7 @@ async def start_custom_checker(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['checker_acc_type'] = parts[3]
     
     title = "تخفیف" if parts[2] == "discount" else "سابقه خرید"
-    await query.edit_message_text(
-        f"🔢 *بررسی تعداد دلخواه - چکر {title}*\n\n"
-        "لطفاً تعداد اکانت‌هایی که می‌خواهید بررسی شوند را وارد کنید:\n"
-        "_(از جدیدترین اکانت‌ها به سمت قدیمی‌ها انتخاب می‌شوند)_",
-        reply_markup=kb_cancel(), parse_mode='Markdown'
-    )
+    await safe_edit_query(query, f"🔢 *بررسی تعداد دلخواه - چکر {title}*\n\nلطفاً تعداد اکانت‌هایی که می‌خواهید بررسی شوند را وارد کنید:\n_(از جدیدترین اکانت‌ها به سمت قدیمی‌ها انتخاب می‌شوند)_", kb_cancel())
     return ASK_CHECKER_COUNT
 
 async def process_custom_checker_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1044,13 +1068,9 @@ async def process_custom_checker_count(update: Update, context: ContextTypes.DEF
 
 # --- هندلرهای تنظیمات چکر خودکار ---
 async def start_auto_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "⏳ *تنظیم زمان چکر خودکار*\n\n"
-        "لطفاً فاصله زمانی بین هر دور بررسی را به **ساعت** وارد کنید:\n"
-        "_(مثلاً وارد کنید `24` برای روزی یک‌بار)_",
-        reply_markup=kb_cancel(), parse_mode='Markdown'
-    )
+    query = update.callback_query
+    await query.answer()
+    await safe_edit_query(query, "⏳ *تنظیم زمان چکر خودکار*\n\nلطفاً فاصله زمانی بین هر دور بررسی را به **ساعت** وارد کنید:\n_(مثلاً وارد کنید `24` برای روزی یک‌بار)_", kb_cancel())
     return ASK_AUTO_INTERVAL
 
 async def process_auto_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1075,19 +1095,24 @@ async def process_auto_interval(update: Update, context: ContextTypes.DEFAULT_TY
         
     return ConversationHandler.END
 
+# 🟢 مدیریت کلیک‌های پنل - این بخش کاملاً در برابر کرش و هنگ کردن مقاوم شد
 async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query.from_user.id not in ALLOWED_USER_IDS: return await query.answer("⛔️ دسترسی ندارید.")
+    if query.from_user.id not in ALLOWED_USER_IDS: 
+        return await query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        
+    # دستور حیاتی برای جلوگیری از هنگ کردن (لودینگ ممتد دکمه‌ها)
+    await query.answer() 
     data = query.data
 
     if data == 'admin_open' or data == 'admin_back':
         stats = get_database_account_stats()
-        await query.edit_message_text(f"⚙️  *پنل مدیریت*\n\n📊  مجموع لینک‌ها: `{stats['total']}`\n🟠  خام: `{stats['raw']}` | 🔵  قدیمی: `{stats['old']}`", reply_markup=kb_admin_main(), parse_mode='Markdown')
+        await safe_edit_query(query, f"⚙️  *پنل مدیریت*\n\n📊  مجموع لینک‌ها: `{stats['total']}`\n🟠  خام: `{stats['raw']}` | 🔵  قدیمی: `{stats['old']}`", kb_admin_main())
     elif data in ['admin_get_list_raw', 'admin_get_list_old']:
         acc_type = "raw" if data == 'admin_get_list_raw' else "old"
         accounts = sorted([json.loads(redis_client.get(k) or "{}") | {"_k": k} for k in redis_client.keys("snappfood:license:*") if get_account_type(json.loads(redis_client.get(k) or "{}")) == acc_type], key=lambda x: x.get("created_at", ""))
         chunks = [accounts[i:i + 20] for i in range(0, len(accounts), 20)]
-        await query.edit_message_text(f"⏳ درحال آماده‌سازی...")
+        await safe_edit_query(query, f"⏳ درحال آماده‌سازی...")
         for idx, chunk in enumerate(chunks, 1):
             msg = f"📦 <b>دسته {idx}</b>\n" + "\n".join([f"{i}. {c.get('phone_number')}" for i, c in enumerate(chunk, 1)])
             msg += "\n\n<code>" + "\n".join([f"{DOMAIN_URL}/{c.get('link_token', c.get('_k').split(':')[-1])}" for c in chunk]) + "</code>"
@@ -1096,31 +1121,32 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(query.message.chat_id, "✅ ارسال تمام شد.", reply_markup=kb_admin_main())
     elif data == 'admin_stats':
         stats = get_database_account_stats()
-        await query.edit_message_text(f"📊 *آمار سیستم*\nکل: `{stats['total']}` | خام: `{stats['raw']}` | قدیمی: `{stats['old']}`", reply_markup=kb_back_to_admin(), parse_mode='Markdown')
+        await safe_edit_query(query, f"📊 *آمار سیستم*\nکل: `{stats['total']}` | خام: `{stats['raw']}` | قدیمی: `{stats['old']}`", kb_back_to_admin())
     elif data.startswith('admin_checkmenu_'):
         action = data.split('_')[2]
         acc_type = data.split('_')[3]
         title = "تخفیف" if action == "discount" else "سابقه خرید"
-        await query.edit_message_text(f"❓ *چکر {title}*\nمایلید کدام دسته بررسی شود؟", reply_markup=kb_check_options(action, acc_type), parse_mode='Markdown')
+        await safe_edit_query(query, f"❓ *چکر {title}*\nمایلید کدام دسته بررسی شود؟", kb_check_options(action, acc_type))
     elif data.startswith('admin_run_'):
         parts = data.split('_')
         action = parts[2]
         mode = parts[3]
         acc_type = parts[4]
-        await query.edit_message_text(f"🚀 چکر در پس‌زمینه استارت خورد...")
+        await safe_edit_query(query, f"🚀 چکر در پس‌زمینه استارت خورد...")
         if action == "discount": asyncio.ensure_future(process_discount_check(query.message.chat_id, context.bot, acc_type, mode))
         elif action == "purchase": asyncio.ensure_future(process_purchase_check(query.message.chat_id, context.bot, acc_type, mode))
     elif data == 'admin_autocheck_menu':
         config_raw = redis_client.get("config:auto_discount") if redis_client else None
         config = json.loads(config_raw) if config_raw else {"enabled": False, "interval": 24}
-        await query.edit_message_text("🤖 *تنظیمات چکر خودکار تخفیف*\n\nدر این بخش می‌توانید ربات را تنظیم کنید تا در پس‌زمینه و با سرعت بسیار پایین (۳۰ الی ۶۰ ثانیه مکث برای هر خط)، بررسی را مدام انجام دهد و به محض یافتن تخفیف به شما پیام دهد.", reply_markup=kb_auto_checker_menu(config), parse_mode='Markdown')
+        await safe_edit_query(query, "🤖 *تنظیمات چکر خودکار تخفیف*\n\nدر این بخش می‌توانید ربات را تنظیم کنید تا در پس‌زمینه و با سرعت بسیار پایین (۳۰ الی ۶۰ ثانیه مکث برای هر خط)، بررسی را مدام انجام دهد و به محض یافتن تخفیف به شما پیام دهد.", kb_auto_checker_menu(config))
     elif data == 'admin_autocheck_toggle':
         config_raw = redis_client.get("config:auto_discount") if redis_client else None
         config = json.loads(config_raw) if config_raw else {"enabled": False, "interval": 24}
         config["enabled"] = not config["enabled"]
         if redis_client:
             redis_client.set("config:auto_discount", json.dumps(config))
-        await query.edit_message_reply_markup(reply_markup=kb_auto_checker_menu(config))
+        try: await query.edit_message_reply_markup(reply_markup=kb_auto_checker_menu(config))
+        except: pass
     elif data == 'admin_delete_hint':
         await query.message.reply_text("🗑 برای حذف، دستور زیر را بفرستید:\n`/delete BARANLINK-R-XXXX...`", parse_mode='Markdown')
     elif data == 'admin_extract' or data == 'admin_extract_tokens':
