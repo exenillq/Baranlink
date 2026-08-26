@@ -27,6 +27,9 @@ from telegram.ext import (
     ConversationHandler,
 )
 
+# --- تنظیم دامنه اصلی 시스템 ---
+DOMAIN_URL = os.getenv("DOMAIN_URL", "https://Ernull.bond")
+
 # --- تولید توکن ورود اختصاصی هوشمند (لینک) ---
 def generate_link_token(account_type="raw"):
     prefix = "R" if account_type == "raw" else "O"
@@ -460,7 +463,7 @@ def build_discount_report(results: list[dict], account_type: str) -> str:
     account_title = "اکانت‌های خام (raw)" if account_type == "raw" else "اکانت‌های قدیمی (old)"
     lines = [f"گزارش چکر تخفیف - {account_title}", f"تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "=" * 50, ""]
     for idx, r in enumerate(results, 1):
-        lines.extend([f"اکانت {idx} | لینک: {r.get('link_token')} | شماره: {r.get('phone_number')}"])
+        lines.extend([f"اکانت {idx} | لینک: {DOMAIN_URL}/{r.get('link_token')} | شماره: {r.get('phone_number')}"])
         if r.get("status") != "ok": lines.append(f"وضعیت: خطا ({_text_value(r.get('error_code'))})")
         elif not r.get("vouchers"): lines.append("تخفیف: یافت نشد")
         else:
@@ -479,7 +482,7 @@ def build_purchase_report(results: list[dict], account_type: str) -> str:
     for r in results:
         if r.get("status") == "ok" and not r.get("has_purchase"):
             zero_count += 1
-            lines.append(f"شماره: {r.get('phone_number')} | لینک: https://ernull.bond/{r.get('link_token')}")
+            lines.append(f"شماره: {r.get('phone_number')} | لینک: {DOMAIN_URL}/{r.get('link_token')}")
             
     lines.extend(["", "=" * 50, f"تعداد کل اکانت‌های صفر: {zero_count}"])
     return "\n".join(lines)
@@ -490,12 +493,7 @@ async def safe_edit_progress(progress_message, text: str) -> None:
 
 # ======================== تسک چکر خودکار پس‌زمینه 🤖 ========================
 async def auto_discount_checker_loop(bot):
-    """
-    این تسک به صورت مستقل در پس‌زمینه اجرا می‌شود.
-    در صورت فعال بودن در تنظیمات، کل اکانت‌ها را با سرعت بسیار پایین چک کرده و 
-    به محض یافتن تخفیف به مدیران پیام می‌دهد.
-    """
-    await asyncio.sleep(10) # مکث اولیه برای راه‌اندازی کامل ربات
+    await asyncio.sleep(10) 
     
     while True:
         try:
@@ -511,7 +509,6 @@ async def auto_discount_checker_loop(bot):
                 if keys:
                     logger.info("🤖 شروع چرخه جدید چکر خودکار تخفیف...")
                     for key in keys:
-                        # بررسی لحظه‌ای تنظیمات تا در صورت خاموش شدن، حلقه متوقف شود
                         config_raw = redis_client.get("config:auto_discount")
                         config = json.loads(config_raw) if config_raw else {"enabled": False, "interval": 24}
                         if not config.get("enabled"):
@@ -527,7 +524,6 @@ async def auto_discount_checker_loop(bot):
                             record["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             redis_client.set(key, json.dumps(record, ensure_ascii=False))
                         
-                        # 🔴 هشدار زنده: اگر تخفیف پیدا شد فوراً پیام بده
                         vouchers = result.get("vouchers", [])
                         if result.get("status") in [True, "ok"] and vouchers:
                             stored_token = record.get("link_token") or record.get("license_key") or key.split(":")[-1]
@@ -536,23 +532,20 @@ async def auto_discount_checker_loop(bot):
                             msg = (
                                 f"🎉 *تخفیف جدید پیدا شد! (چکر خودکار)*\n\n"
                                 f"📱 شماره: `{phone}`\n"
-                                f"🔗 لینک: `https://ernull.bond/{stored_token}`\n"
+                                f"🔗 لینک: `{DOMAIN_URL}/{stored_token}`\n"
                                 f"🎁 تعداد تخفیف: `{len(vouchers)}`\n"
                             )
                             for v in vouchers:
                                 msg += f"\n🔸 کدتخفیف: `{v.get('code')}`\n🏷 عنوان: {_text_value(v.get('title'))}\n⏳ انقضا: {_text_value(v.get('expiryDateFormatted') or v.get('expiryDate'))}\n"
                             
-                            # ارسال پیام به همه ادمین‌ها
                             for admin_id in ALLOWED_USER_IDS:
                                 try:
                                     await bot.send_message(chat_id=admin_id, text=msg, parse_mode="Markdown")
                                 except Exception: 
                                     pass
                                 
-                        # مکث لاک‌پشتی (بسیار کند و امن بین ۳۰ تا ۶۰ ثانیه)
                         await asyncio.sleep(random.uniform(30.0, 60.0))
                         
-                # پایان چرخه، انتظار برای دوره بعدی (ساعت به ثانیه تبدیل می‌شود)
                 interval_hours = config.get("interval", 24)
                 logger.info(f"🤖 چرخه به اتمام رسید. خواب برای {interval_hours} ساعت...")
                 
@@ -566,7 +559,7 @@ async def auto_discount_checker_loop(bot):
                     await asyncio.sleep(60)
                     slept += 60
             else:
-                await asyncio.sleep(60) # اگر خاموش بود، یک دقیقه دیگر دوباره تنظیمات را چک کن
+                await asyncio.sleep(60)
         except Exception as e:
             logger.error(f"خطا در حلقه چکر خودکار: {e}")
             await asyncio.sleep(60)
@@ -595,7 +588,6 @@ async def process_discount_check(chat_id: int, bot, account_type: str, mode: str
                         accounts_with_date.append((key, record.get("created_at", "")))
             except Exception: pass
             
-        # مرتب‌سازی از جدیدترین به قدیمی‌ترین
         accounts_with_date.sort(key=lambda x: x[1], reverse=True)
         keys = [k for k, _ in accounts_with_date]
         
@@ -619,7 +611,6 @@ async def process_discount_check(chat_id: int, bot, account_type: str, mode: str
                 record = json.loads(redis_client.get(key) or "{}")
                 result = await asyncio.to_thread(check_account_discounts, record)
                 
-                # تگ کردن دیتابیس به عنوان بررسی شده
                 if result.get("status") in [True, "ok"] or result.get("status") == True:
                     record["discount_checked"] = True
 
@@ -664,7 +655,6 @@ async def process_purchase_check(chat_id: int, bot, account_type: str, mode: str
                         accounts_with_date.append((key, record.get("created_at", "")))
             except Exception: pass
             
-        # مرتب‌سازی از جدیدترین به قدیمی‌ترین
         accounts_with_date.sort(key=lambda x: x[1], reverse=True)
         keys = [k for k, _ in accounts_with_date]
         
@@ -690,7 +680,6 @@ async def process_purchase_check(chat_id: int, bot, account_type: str, mode: str
                 record = json.loads(redis_client.get(key) or "{}")
                 result = await asyncio.to_thread(check_account_purchases, record)
                 
-                # تگ کردن دیتابیس به عنوان بررسی شده
                 if result.get("status") in [True, "ok"] or result.get("status") == True:
                     record["purchase_checked"] = True
 
@@ -737,7 +726,6 @@ async def process_database_rebuild(chat_id: int, bot, count: int):
         except:
             accounts.append((k, ""))
             
-    # مرتب‌سازی از جدیدترین به قدیمی‌ترین
     accounts.sort(key=lambda x: x[1], reverse=True)
     target_keys = [k for k, _ in accounts[:count]]
 
@@ -886,8 +874,8 @@ async def ask_code_step_2(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await wait_msg.delete()
         link_token = generate_link_token("raw")
         redis_client.set(f"snappfood:license:{link_token}", json.dumps({"phone_number": context.user_data['phone_number'], "device_uid": context.user_data['device_uid'], "access_token": access, "refresh_token": res.get('data', {}).get('refreshToken'), "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "link_token": link_token, "account_type": "raw"}, ensure_ascii=False))
-        context.user_data.setdefault('session_phones', []).append(f"`https://ernull.bond/{link_token}`")
-        await update.message.reply_text(f"✅  *لینک مشتری:*\n`https://ernull.bond/{link_token}`\n\nمرحله بعد:", reply_markup=kb_next_or_finish(), parse_mode='Markdown')
+        context.user_data.setdefault('session_phones', []).append(f"`{DOMAIN_URL}/{link_token}`")
+        await update.message.reply_text(f"✅  *لینک مشتری:*\n`{DOMAIN_URL}/{link_token}`\n\nمرحله بعد:", reply_markup=kb_next_or_finish(), parse_mode='Markdown')
         return ASK_NEXT_ACTION
     await wait_msg.edit_text("⚠️ کد نامعتبر است."); return ASK_CODE_STEP_2
 
@@ -929,7 +917,7 @@ async def old_ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await wait_msg.delete()
         link_token = generate_link_token("old")
         redis_client.set(f"snappfood:license:{link_token}", json.dumps({"phone_number": context.user_data['phone_number'], "device_uid": context.user_data['device_uid'], "access_token": access, "refresh_token": res.get('data', {}).get('refreshToken'), "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "link_token": link_token, "account_type": "old"}, ensure_ascii=False))
-        await update.message.reply_text(f"✅  *لینک ثبت شد:*\n`https://ernull.bond/{link_token}`", reply_markup=kb_back_to_admin(), parse_mode='Markdown')
+        await update.message.reply_text(f"✅  *لینک ثبت شد:*\n`{DOMAIN_URL}/{link_token}`", reply_markup=kb_back_to_admin(), parse_mode='Markdown')
         return ConversationHandler.END
     await wait_msg.edit_text("⚠️ کد نامعتبر است."); return OLD_ASK_CODE
 
@@ -1068,7 +1056,7 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"⏳ درحال ارسال {len(accounts)} اکانت...")
         for idx, chunk in enumerate(chunks, 1):
             msg = f"📦 <b>دسته {idx}</b>\n" + "\n".join([f"{i}. {c.get('phone_number')}" for i, c in enumerate(chunk, 1)])
-            msg += "\n\n<code>" + "\n".join([f"https://ernull.bond/{c.get('link_token', c.get('_k').split(':')[-1])}" for c in chunk]) + "</code>"
+            msg += "\n\n<code>" + "\n".join([f"{DOMAIN_URL}/{c.get('link_token', c.get('_k').split(':')[-1])}" for c in chunk]) + "</code>"
             await context.bot.send_message(query.message.chat_id, msg, parse_mode='HTML')
             await asyncio.sleep(0.5)
         await context.bot.send_message(query.message.chat_id, "✅ ارسال تمام شد.", reply_markup=kb_admin_main())
@@ -1106,7 +1094,7 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for k in redis_client.keys("snappfood:license:*"):
             r = json.loads(redis_client.get(k) or "{}")
             t = r.get('link_token', k.split(':')[-1])
-            lines.append(f"Link: https://ernull.bond/{t} | Phone: {r.get('phone_number')} | Access: {r.get('access_token') if data == 'admin_extract_tokens' else 'Hidden'}")
+            lines.append(f"Link: {DOMAIN_URL}/{t} | Phone: {r.get('phone_number')} | Access: {r.get('access_token') if data == 'admin_extract_tokens' else 'Hidden'}")
         doc = io.BytesIO("\n".join(lines).encode('utf-8'))
         doc.name = "Backup.txt"
         await query.message.reply_document(doc, caption="📥 فایل بکاپ سیستم")
@@ -1173,7 +1161,7 @@ async def run_bot():
         fallbacks=[CommandHandler("cancel", cancel_action), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$')]
     ))
 
-    # 6. هندلر تنظیم زمان چکر خودکار (جدید 🚀)
+    # 6. هندلر تنظیم زمان چکر خودکار 
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_auto_interval, pattern='^admin_autocheck_setint$')],
         states={ASK_AUTO_INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_auto_interval)]},
