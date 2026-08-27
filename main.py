@@ -33,7 +33,7 @@ DOMAIN_URL = os.getenv("DOMAIN_URL", "https://Ernull.bond")
 # --- تولید لایسنس اختصاصی هوشمند ---
 def generate_link_token(account_type="raw"):
     prefix = "R" if account_type == "raw" else "O"
-    return f"BARANLINK-{prefix}-{str(uuid.uuid4())[:8].upper()}{str(uuid.uuid4())[:8].upper()}"
+    return f"{prefix}-{str(uuid.uuid4())[:8].upper()}{str(uuid.uuid4())[:8].upper()}"
 
 FIRST_NAMES = ["علی", "محمد", "یوسف", "امیر", "حسین", "رضا", "مهدی", "سارا", "زهرا", "مریم", "علیرضا", "عرفان", "نیما"]
 LAST_NAMES = ["راد", "تهرانی", "حسینی", "پارسا", "دانش", "آریا", "محمدی", "کریمی", "احمدی", "ت زاده", "کمالی", "مجیدی"]
