@@ -10,7 +10,8 @@ import io
 import time
 import urllib3
 import random
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import JSONResponse
@@ -505,7 +506,13 @@ async def safe_edit_progress(progress_message, text: str) -> None:
     try: await progress_message.edit_text(text, parse_mode="Markdown")
     except Exception: pass
 
-# ======================== تسک چکر خودکار پس‌زمینه ========================
+
+
+
+# ======================== تسک چکر خودکار پس‌زمینه (تنظیم بر اساس ساعت ایران) ========================
+IRAN_TZ = timezone(timedelta(hours=3, minutes=30))  # تنظیم منطقه زمانی رسمی ایران
+TARGET_RUN_HOUR = 4  # ساعت ۴ صبح به وقت تهران
+
 async def auto_discount_checker_loop(bot):
     await asyncio.sleep(10) 
     
@@ -516,67 +523,68 @@ async def auto_discount_checker_loop(bot):
                 continue
                 
             config_raw = redis_client.get("config:auto_discount")
-            config = json.loads(config_raw) if config_raw else {"enabled": False, "interval": 24}
+            config = json.loads(config_raw) if config_raw else {"enabled": False}
             
             if config.get("enabled"):
-                keys = redis_client.keys("snappfood:license:*")
-                if keys:
-                    logger.info("🤖 شروع چرخه جدید چکر خودکار تخفیف...")
-                    for key in keys:
-                        config_raw = redis_client.get("config:auto_discount")
-                        config = json.loads(config_raw) if config_raw else {"enabled": False, "interval": 24}
-                        if not config.get("enabled"):
-                            break
-                            
-                        raw = redis_client.get(key)
-                        if not raw: continue
-                        record = json.loads(raw)
-                        
-                        result = await asyncio.to_thread(check_account_discounts, record)
-                        
-                        if result.get("refreshed") and result.get("status") and record.get("access_token"):
-                            record["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            redis_client.set(key, json.dumps(record, ensure_ascii=False))
-                        
-                        vouchers = result.get("vouchers", [])
-                        if result.get("status") in [True, "ok"] and vouchers:
-                            stored_token = record.get("link_token") or record.get("license_key") or key.split(":")[-1]
-                            phone = record.get("phone_number", "نامشخص")
-                            
-                            msg = (
-                                f"🎉 *تخفیف جدید پیدا شد! (چکر خودکار)*\n\n"
-                                f"📱 شماره: `{phone}`\n"
-                                f"🔗 لینک: `{DOMAIN_URL}/{stored_token}`\n"
-                                f"🎁 تعداد تخفیف: `{len(vouchers)}`\n"
-                            )
-                            for v in vouchers:
-                                msg += f"\n🔸 کدتخفیف: `{v.get('code')}`\n🏷 عنوان: {_text_value(v.get('title'))}\n⏳ انقضا: {_text_value(v.get('expiryDateFormatted') or v.get('expiryDate'))}\n"
-                            
-                            for admin_id in ALLOWED_USER_IDS:
-                                try:
-                                    await bot.send_message(chat_id=admin_id, text=msg, parse_mode="Markdown")
-                                except Exception: 
-                                    pass
-                                
-                        await asyncio.sleep(random.uniform(30.0, 60.0))
-                        
-                interval_hours = config.get("interval", 24)
-                logger.info(f"🤖 چرخه به اتمام رسید. خواب برای {interval_hours} ساعت...")
+                # دریافت زمان دقیق بر اساس وقت ایران بدون توجه به موقعیت سرور در سنگاپور
+                now_iran = datetime.now(IRAN_TZ)
+                today_str = now_iran.strftime("%Y-%m-%d")
+                last_run = redis_client.get("config:auto_discount:last_run_date")
                 
-                wait_seconds = interval_hours * 3600
-                slept = 0
-                while slept < wait_seconds:
-                    config_raw = redis_client.get("config:auto_discount")
-                    config = json.loads(config_raw) if config_raw else {"enabled": False, "interval": 24}
-                    if not config.get("enabled"):
-                        break
-                    await asyncio.sleep(60)
-                    slept += 60
-            else:
-                await asyncio.sleep(60)
+                # اگر ساعت ۴ صبح به وقت ایران بود و امروز اجرا نشده بود
+                if now_iran.hour == TARGET_RUN_HOUR and last_run != today_str:
+                    keys = redis_client.keys("snappfood:license:*")
+                    if keys:
+                        logger.info(f"🤖 شروع چکر خودکار روزانه به وقت ایران (تاریخ: {today_str})...")
+                        
+                        for key in keys:
+                            cfg = json.loads(redis_client.get("config:auto_discount") or "{}")
+                            if not cfg.get("enabled"):
+                                break
+                                
+                            raw = redis_client.get(key)
+                            if not raw:
+                                continue
+                            record = json.loads(raw)
+                            
+                            result = await asyncio.to_thread(check_account_discounts, record)
+                            
+                            if result.get("refreshed") and result.get("status") and record.get("access_token"):
+                                record["updated_at"] = now_iran.strftime("%Y-%m-%d %H:%M:%S")
+                                redis_client.set(key, json.dumps(record, ensure_ascii=False))
+                            
+                            vouchers = result.get("vouchers", [])
+                            if result.get("status") in [True, "ok"] and vouchers:
+                                stored_token = record.get("link_token") or record.get("license_key") or key.split(":")[-1]
+                                phone = record.get("phone_number", "نامشخص")
+                                
+                                msg = (
+                                    f"🎉 *تخفیف جدید پیدا شد! (چکر خودکار روزانه)*\n\n"
+                                    f"📱 شماره: `{phone}`\n"
+                                    f"🔗 لینک: `{DOMAIN_URL}/{stored_token}`\n"
+                                    f"🎁 تعداد تخفیف: `{len(vouchers)}`\n"
+                                )
+                                for v in vouchers:
+                                    msg += f"\n🔸 کدتخفیف: `{v.get('code')}`\n🏷 عنوان: {_text_value(v.get('title'))}\n⏳ انقضا: {_text_value(v.get('expiryDateFormatted') or v.get('expiryDate'))}\n"
+                                
+                                for admin_id in ALLOWED_USER_IDS:
+                                    try:
+                                        await bot.send_message(chat_id=admin_id, text=msg, parse_mode="Markdown")
+                                    except Exception: 
+                                        pass
+                                    
+                            await asyncio.sleep(random.uniform(30.0, 60.0))
+                        
+                        # ثبت تاریخ اجرای امروز در دیتابیس
+                        redis_client.set("config:auto_discount:last_run_date", today_str)
+                        logger.info(f"✅ چکر خودکار امروز ({today_str}) با موفقیت پایان یافت.")
+                
+            await asyncio.sleep(60)
+            
         except Exception as e:
             logger.error(f"خطا در حلقه چکر خودکار: {e}")
             await asyncio.sleep(60)
+
 
 # ======================== پردازش‌های پس‌زمینه (Async) ========================
 async def process_discount_check(chat_id: int, bot, account_type: str, mode: str = "all", count: int = 0) -> None:
