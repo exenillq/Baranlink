@@ -107,15 +107,11 @@ purchase_check_lock = asyncio.Lock()
 # ======================== وب‌سرور (پاسخ‌دهنده لینک‌ها) ========================
 app = FastAPI(title="Baran Link System", docs_url=None, redoc_url=None)
 
-# 🟢 مسیر دوگانه: حالا هم با آدرس اصلی و هم با آدرس api جواب میده!
 @app.get("/{link_token}")
 @app.get("/api/BaranToken/{link_token}")
 async def get_token(link_token: str, x_api_key: Optional[str] = Header(default=None)):
     if API_SECRET_KEY and x_api_key != API_SECRET_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
-        
-    if not link_token.startswith("BARANLINK-"):
-        raise HTTPException(status_code=400, detail="Invalid license key format")
 
     if not redis_client:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -137,17 +133,6 @@ async def get_token(link_token: str, x_api_key: Optional[str] = Header(default=N
         "refresh_token": data.get("refresh_token"),
         "updated_at": data.get("updated_at")
     })
-
-@app.get("/health")
-async def health_check():
-    db_ok = False
-    if redis_client:
-        try:
-            redis_client.ping()
-            db_ok = True
-        except Exception:
-            pass
-    return {"status": "ok", "database": "connected" if db_ok else "disconnected"}
 
 # =================================================================
 # --- توابع ارتباط با سامانه‌ها ---
