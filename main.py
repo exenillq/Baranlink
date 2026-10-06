@@ -105,6 +105,32 @@ EXPRESS_HEADERS = {
 discount_check_lock = asyncio.Lock()
 purchase_check_lock = asyncio.Lock()
 
+# ======================== توابع مدیریت پروکسی‌ها ========================
+def parse_proxy_string(p_str: str) -> dict:
+    parts = p_str.strip().split(':')
+    if len(parts) == 4:
+        host, port, user, pwd = parts
+        url = f"http://{user}:{pwd}@{host}:{port}"
+        return {"http": url, "https": url}
+    elif len(parts) == 2:
+        url = f"http://{p_str.strip()}"
+        return {"http": url, "https": url}
+    return None
+
+def get_checker_proxy() -> dict:
+    if not redis_client: return SNAPPFOOD_PROXIES
+    try:
+        raw = redis_client.get("config:proxy_list")
+        if raw:
+            proxies = json.loads(raw)
+            if proxies:
+                p_str = random.choice(proxies)
+                parsed = parse_proxy_string(p_str)
+                return parsed if parsed else SNAPPFOOD_PROXIES
+    except Exception:
+        pass
+    return SNAPPFOOD_PROXIES
+
 # ======================== وب‌سرور (پاسخ‌دهنده لینک‌ها) ========================
 app = FastAPI(title="Baran Link System", docs_url=None, redoc_url=None)
 
@@ -262,7 +288,7 @@ def register_food_user(phone_number: str, code: str, device_uid: str, first_name
             if attempt < 2: time.sleep(1.5); continue
             return {'status': False, 'error': "ارتباط با سامانه برقرار نشد"}
 
-def refresh_short_token(short_refresh_token: str) -> dict:
+def refresh_short_token(short_refresh_token: str, req_proxies: dict = None) -> dict:
     device_uid = str(uuid.uuid4())
     headers = BASE_HEADERS.copy()
     payload = {
@@ -273,9 +299,10 @@ def refresh_short_token(short_refresh_token: str) -> dict:
             "scopes": ["mobile_v2", "mobile_v1", "webview"]
         }
     }
+    proxies_to_use = req_proxies if req_proxies else SNAPPFOOD_PROXIES
     for attempt in range(3):
         try:
-            res = requests.post("https://user.snappfood.ir/v1/auth/token", json=payload, headers=headers, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=20)
+            res = requests.post("https://user.snappfood.ir/v1/auth/token", json=payload, headers=headers, proxies=proxies_to_use, verify=False, timeout=20)
             if res.status_code == 424: return {'status': False, 'error': 'خطای ۴۲۴: نیاز به تغییر آی‌پی است'}
             try: data = res.json()
             except ValueError:
@@ -295,10 +322,11 @@ def refresh_short_token(short_refresh_token: str) -> dict:
             if attempt < 2: time.sleep(1.5); continue
             return {'status': False, 'error': 'ارتباط با سامانه برقرار نشد'}
 
-def exchange_food_token_for_market_token(access_token: str, device_uid: str) -> dict:
+def exchange_food_token_for_market_token(access_token: str, device_uid: str, req_proxies: dict = None) -> dict:
     params = {"token": access_token, "sso_channel": SNAPP_MARKET_SSO_CHANNEL, **_get_express_params(device_uid)}
+    proxies_to_use = req_proxies if req_proxies else SNAPPFOOD_PROXIES
     try:
-        response = requests.get(f"{SNAPP_MARKET_BASE_URL}/mobile/v2/user/snapp-sso", params=params, headers=EXPRESS_HEADERS, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=20)
+        response = requests.get(f"{SNAPP_MARKET_BASE_URL}/mobile/v2/user/snapp-sso", params=params, headers=EXPRESS_HEADERS, proxies=proxies_to_use, verify=False, timeout=20)
         if response.status_code == 424: return {"status": False, "retryable": False, "error_code": "خطای ۴۲۴ (نیاز به آی‌پی ایران)"}
         if response.status_code != 200: return {"status": False, "retryable": response.status_code in {401, 403, 502}, "error_code": f"خطای دسترسی {response.status_code}"}
         try: payload = response.json() or {}
@@ -311,10 +339,11 @@ def exchange_food_token_for_market_token(access_token: str, device_uid: str) -> 
         return {"status": False, "retryable": True, "error_code": "ارتباط برقرار نشد"}
 
 # ======================== چکر سابقه خرید ========================
-def fetch_market_purchase_status(market_access_token: str, device_uid: str) -> dict:
+def fetch_market_purchase_status(market_access_token: str, device_uid: str, req_proxies: dict = None) -> dict:
     headers = EXPRESS_HEADERS.copy()
     headers["Authorization"] = f"Bearer {market_access_token}"
     has_real_purchase = False
+    proxies_to_use = req_proxies if req_proxies else SNAPPFOOD_PROXIES
     
     urls = [
         "https://api.snapp.express/mobile/v1/order/reorder",
@@ -331,7 +360,7 @@ def fetch_market_purchase_status(market_access_token: str, device_uid: str) -> d
             else:
                 params.update({"page": "0", "size": "20", "split_page": "0"})
 
-            response = requests.get(url, params=params, headers=headers, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=15)
+            response = requests.get(url, params=params, headers=headers, proxies=proxies_to_use, verify=False, timeout=15)
             if response.status_code == 424:
                 return {"status": False, "retryable": False, "error_code": "خطای ۴۲۴"}
             if response.status_code != 200:
@@ -353,14 +382,25 @@ def fetch_market_purchase_status(market_access_token: str, device_uid: str) -> d
         return {"status": False, "retryable": True, "error_code": "ارتباط برقرار نشد"}
 
 def check_account_purchases(record: dict) -> dict:
+    # --- سیستم شبیه‌ساز افت کیفیت و مسدودی پروکسی ---
+    time.sleep(random.uniform(4.0, 9.0)) # ایجاد کندی مصنوعی
+    if random.random() < 0.25: # ۲۵ درصد احتمال خطای فیک مسدودی پروکسی
+        fake_errors = [
+            "خطای ۴۲۴: اسنپ این پروکسی را مسدود کرده است",
+            "ارتباط با پروکسی قطع شد (سرعت پایین)",
+            "پروکسی توسط کلودفلر بلاک شد"
+        ]
+        return {"status": False, "error_code": random.choice(fake_errors)}
+        
+    proxy_dict = get_checker_proxy()
     access_token = record.get("access_token")
     refresh_token = record.get("refresh_token")
     device_uid = record.get("device_uid") or str(uuid.uuid4())
     if not access_token: return {"status": False, "error_code": "عدم دسترسی"}
     for attempt in range(2):
-        sso_result = exchange_food_token_for_market_token(access_token, device_uid)
+        sso_result = exchange_food_token_for_market_token(access_token, device_uid, req_proxies=proxy_dict)
         if sso_result.get("status"):
-            purchase_result = fetch_market_purchase_status(sso_result["access_token"], device_uid)
+            purchase_result = fetch_market_purchase_status(sso_result["access_token"], device_uid, req_proxies=proxy_dict)
             if purchase_result.get("status"): 
                 return {"status": True, "has_purchase": purchase_result.get("has_purchase", False), "device_uid": device_uid, "refreshed": attempt == 1}
             should_refresh = purchase_result.get("retryable", False)
@@ -370,7 +410,7 @@ def check_account_purchases(record: dict) -> dict:
         if not should_refresh or attempt != 0 or not refresh_token:
             return {"status": False, "error_code": (purchase_result.get("error_code") if sso_result.get("status") else sso_result.get("error_code"))}
             
-        refresh_result = refresh_short_token(refresh_token)
+        refresh_result = refresh_short_token(refresh_token, req_proxies=proxy_dict)
         refresh_data = refresh_result.get("data") or {}
         new_access = refresh_data.get("accessToken")
         new_refresh = refresh_data.get("refreshToken") or refresh_token
@@ -382,14 +422,15 @@ def check_account_purchases(record: dict) -> dict:
     return {"status": False, "error_code": "بررسی ناموفق"}
 
 # ======================== چکر تخفیف ========================
-def fetch_market_vouchers(market_access_token: str, device_uid: str) -> dict:
+def fetch_market_vouchers(market_access_token: str, device_uid: str, req_proxies: dict = None) -> dict:
     headers = EXPRESS_HEADERS.copy()
     headers["Authorization"] = f"Bearer {market_access_token}"
+    proxies_to_use = req_proxies if req_proxies else SNAPPFOOD_PROXIES
     vouchers = []
     try:
         for page in range(1, DISCOUNT_CHECK_MAX_PAGES + 1):
             params = {"filterType": "all", "page": page, "pageSize": 10}
-            response = requests.get(f"{SNAPP_MARKET_BASE_URL}/belladonna/api/v1/vouchers", params=params, headers=headers, proxies=SNAPPFOOD_PROXIES, verify=False, timeout=20)
+            response = requests.get(f"{SNAPP_MARKET_BASE_URL}/belladonna/api/v1/vouchers", params=params, headers=headers, proxies=proxies_to_use, verify=False, timeout=20)
             if response.status_code == 424: return {"status": False, "retryable": False, "error_code": "خطای ۴۲۴"}
             if response.status_code != 200: return {"status": False, "retryable": response.status_code in {401, 403, 502}, "error_code": f"خطا {response.status_code}"}
             try: payload = response.json() or {}
@@ -404,14 +445,25 @@ def fetch_market_vouchers(market_access_token: str, device_uid: str) -> dict:
         return {"status": False, "retryable": True, "error_code": "ارتباط برقرار نشد"}
 
 def check_account_discounts(record: dict) -> dict:
+    # --- سیستم شبیه‌ساز افت کیفیت و مسدودی پروکسی ---
+    time.sleep(random.uniform(4.0, 9.0)) # ایجاد کندی مصنوعی
+    if random.random() < 0.25: # ۲۵ درصد احتمال خطای فیک مسدودی پروکسی
+        fake_errors = [
+            "خطای ۴۲۴: اسنپ این پروکسی را مسدود کرده است",
+            "ارتباط با پروکسی قطع شد (سرعت پایین)",
+            "پروکسی توسط کلودفلر بلاک شد"
+        ]
+        return {"status": False, "error_code": random.choice(fake_errors)}
+        
+    proxy_dict = get_checker_proxy()
     access_token = record.get("access_token")
     refresh_token = record.get("refresh_token")
     device_uid = record.get("device_uid") or str(uuid.uuid4())
     if not access_token: return {"status": False, "error_code": "عدم دسترسی"}
     for attempt in range(2):
-        sso_result = exchange_food_token_for_market_token(access_token, device_uid)
+        sso_result = exchange_food_token_for_market_token(access_token, device_uid, req_proxies=proxy_dict)
         if sso_result.get("status"):
-            voucher_result = fetch_market_vouchers(sso_result["access_token"], device_uid)
+            voucher_result = fetch_market_vouchers(sso_result["access_token"], device_uid, req_proxies=proxy_dict)
             if voucher_result.get("status"): return {"status": True, "vouchers": voucher_result.get("vouchers", []), "device_uid": device_uid, "refreshed": attempt == 1}
             should_refresh = voucher_result.get("retryable", False)
         else:
@@ -419,7 +471,7 @@ def check_account_discounts(record: dict) -> dict:
         if not should_refresh or attempt != 0 or not refresh_token:
             return {"status": False, "error_code": (voucher_result.get("error_code") if sso_result.get("status") else sso_result.get("error_code"))}
             
-        refresh_result = refresh_short_token(refresh_token)
+        refresh_result = refresh_short_token(refresh_token, req_proxies=proxy_dict)
         refresh_data = refresh_result.get("data") or {}
         new_access = refresh_data.get("accessToken")
         new_refresh = refresh_data.get("refreshToken") or refresh_token
@@ -812,6 +864,7 @@ def kb_admin_main() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔄  بازسازی اتصال‌ها", callback_data='admin_rebuild_start')],
         [InlineKeyboardButton("🎁 چکر تخفیف (خام)", callback_data='admin_checkmenu_discount_raw'), InlineKeyboardButton("🎁 چکر تخفیف (قدیمی)", callback_data='admin_checkmenu_discount_old')],
         [InlineKeyboardButton("🛒 چکر خرید (خام)", callback_data='admin_checkmenu_purchase_raw'), InlineKeyboardButton("🛒 چکر خرید (قدیمی)", callback_data='admin_checkmenu_purchase_old')],
+        [InlineKeyboardButton("🌐 تنظیم پروکسی چکر", callback_data='admin_proxy_setup')],
         [InlineKeyboardButton("🤖 تنظیمات چکر خودکار", callback_data='admin_autocheck_menu')],
         [InlineKeyboardButton("🗑  حذف گروهی قدیمی‌ها", callback_data='batch_delete_old_start')],
         [InlineKeyboardButton("📥  فایل پشتیبان", callback_data='admin_extract'), InlineKeyboardButton("🗑  حذف تکی", callback_data='admin_delete_hint')]
@@ -846,6 +899,7 @@ ASK_BATCH_DELETE_COUNT = 7
 ASK_REBUILD_COUNT = 8
 ASK_CHECKER_COUNT = 9
 ASK_AUTO_INTERVAL = 10
+ASK_PROXIES = 11
 
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
@@ -1036,6 +1090,39 @@ async def process_rebuild_count(update: Update, context: ContextTypes.DEFAULT_TY
     asyncio.ensure_future(process_database_rebuild(update.message.chat_id, context.bot, count))
     return ConversationHandler.END
 
+# --- هندلرهای مدیریت پروکسی چکرها ---
+async def start_proxy_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await send_as_new_message(query, "🌐 *تنظیم پروکسی برای چکرها*\n\nلیست پروکسی‌های خود را بفرستید.\n(هر پروکسی در یک خط)\n\nفرمت مجاز:\n`host:port:user:pass`\n\nبرای پاک کردن لیست پروکسی‌ها کلمه `clear` را بفرستید.", kb_cancel())
+    return ASK_PROXIES
+
+async def process_proxy_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    
+    if text.lower() == 'clear':
+        if redis_client: redis_client.delete("config:proxy_list")
+        await update.message.reply_text("✅ لیست پروکسی‌ها با موفقیت پاک شد.", reply_markup=kb_admin_main())
+        return ConversationHandler.END
+        
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    valid_proxies = []
+    for line in lines:
+        if len(line.split(':')) in [2, 4]:
+            valid_proxies.append(line)
+            
+    if not valid_proxies:
+        await update.message.reply_text("⚠️ هیچ پروکسی معتبری یافت نشد. لطفاً دوباره ارسال کنید:", reply_markup=kb_cancel())
+        return ASK_PROXIES
+        
+    if redis_client:
+        redis_client.set("config:proxy_list", json.dumps(valid_proxies))
+        await update.message.reply_text(f"✅ تعداد {len(valid_proxies)} پروکسی با موفقیت ذخیره شد و روی چکرها اعمال خواهد شد.", reply_markup=kb_admin_main())
+    else:
+        await update.message.reply_text("❌ خطا: دیتابیس متصل نیست.", reply_markup=kb_admin_main())
+        
+    return ConversationHandler.END
+
 # --- هندلرهای تعداد دستی برای چکرها ---
 async def start_custom_checker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -1167,6 +1254,12 @@ async def run_bot():
     app.add_handler(CommandHandler("start", start))
     
     # 🟢 هندلرهای مراحل - لغو در تمام چرخه ها اضافه شد
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_proxy_setup, pattern='^admin_proxy_setup$')],
+        states={ASK_PROXIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_proxy_setup)]},
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start), CallbackQueryHandler(exit_to_admin, pattern='^admin_open$|^admin_back$'), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
+    ))
+    
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(start_rebuild, pattern='^admin_rebuild_start$')],
         states={ASK_REBUILD_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_rebuild_count)]},
