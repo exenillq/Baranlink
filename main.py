@@ -38,7 +38,7 @@ DEFAULT_PROXY_API = "https://erlink.s3.ir-thr-at1.arvanstorage.ir/%DB%B6%20%288%
 # افزودن وضعیت جدید برای دریافت تعداد لینک‌های اخیر
 PHONE, OTP, ASK_NAME, ASK_TAG, ASK_SEARCH, ASK_LINKS_FOR_DISCOUNT, ASK_LATEST_COUNT = range(7)
 
-executor = ThreadPoolExecutor(max_workers=30)
+executor = ThreadPoolExecutor(max_workers=5)
 
 # لیست User-Agent های واقعی موبایل
 USER_AGENTS = [
